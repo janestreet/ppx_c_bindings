@@ -1,0 +1,7 @@
+(executables
+ (modes byte exe)
+ (names ppx_c_bindings)
+ (public_names ppx-c-bindings)
+ (libraries core_unix.command_unix ppx_c_bindings_common)
+ (preprocess
+  (pps ppx_jane)))

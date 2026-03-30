@@ -1,0 +1,7 @@
+(library
+ (name ppx_c_bindings)
+ (public_name ppx_c_bindings)
+ (kind ppx_rewriter)
+ (libraries ppx_c_bindings_common ppxlib)
+ (preprocess
+  (pps ppx_jane)))

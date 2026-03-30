@@ -1,0 +1,20 @@
+(library
+ (foreign_stubs
+  (language c)
+  (names example_stubs)
+  (flags :standard -Wno-unused-function))
+ (name ppx_c_bindings_test)
+ (libraries core)
+ (preprocess
+  (pps ppx_jane ppx_c_bindings)))
+
+(alias
+ (name default)
+ (deps example.ml.pp example.mli.pp))
+
+(rule
+ (deps example.ml)
+ (targets example_stubs.c)
+ (action
+  (bash
+    "%{bin:ppx-c-bindings} -no-line-numbers %{deps} | %{bin:apply-style} - -clang-format -original-file %{targets} >%{targets}")))

@@ -1,0 +1,6 @@
+(library
+ (name ppx_c_bindings_common)
+ (public_name ppx_c_bindings.common)
+ (libraries core janestreet_crc core_unix.filename_unix ppxlib ppxlib_jane)
+ (preprocess
+  (pps ppx_jane ppxlib.metaquot)))
