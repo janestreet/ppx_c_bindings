@@ -6,7 +6,7 @@ open Core
 #include <string.h>
 |}]
 
-type fake_str = [%c {|char*|} ~free:{|free(*t);|}]
+type fake_str : immutable_data = [%c {|char*|} ~free:{|free(*t);|}]
 
 let make_fake_str str =
   let t = alloc_fake_str () in
