@@ -28,10 +28,3 @@ let of_expression expr =
   let args = C_template.vars code.txt in
   { code; args; return; alloc }
 ;;
-
-let native_and_bytecode_differ t =
-  (not t.alloc)
-  || Map.length t.args > 5
-  || Map.exists t.args ~f:Type_.is_unboxed_or_untagged
-  || Option.exists t.return ~f:Type_.is_unboxed_or_untagged
-;;

@@ -1,0 +1,41 @@
+(rule
+ (deps ox_with_ptr_sexp.ml)
+ (targets ox_with_ptr_sexp_stubs.c)
+ (action
+  (bash "%{bin:ppx-c-bindings} %{deps} >%{targets}")))
+
+(rule
+ (deps numbers.ml)
+ (targets numbers_stubs.c)
+ (action
+  (bash "%{bin:ppx-c-bindings} %{deps} >%{targets}")))
+
+(rule
+ (deps pointers.ml)
+ (targets pointers_stubs.c)
+ (action
+  (bash "%{bin:ppx-c-bindings} %{deps} >%{targets}")))
+
+(rule
+ (deps tuples.ml)
+ (targets tuples_stubs.c)
+ (action
+  (bash "%{bin:ppx-c-bindings} %{deps} >%{targets}")))
+
+(rule
+ (deps tuples_alloc.ml)
+ (targets tuples_alloc_stubs.c)
+ (action
+  (bash "%{bin:ppx-c-bindings} %{deps} >%{targets}")))
+
+(rule
+ (deps tuples_cpp.ml)
+ (targets tuples_cpp_stubs.cpp)
+ (action
+  (bash "%{bin:ppx-c-bindings} %{deps} >%{targets}")))
+
+(rule
+ (deps tuples_cpp_alloc.ml)
+ (targets tuples_cpp_alloc_stubs.cpp)
+ (action
+  (bash "%{bin:ppx-c-bindings} %{deps} >%{targets}")))

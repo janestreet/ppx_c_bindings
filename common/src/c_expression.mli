@@ -25,4 +25,3 @@ val return : t -> Type_.t option
 val code : t -> C_template.t Loc.t
 val alloc : t -> bool
 val of_expression : expression -> t option
-val native_and_bytecode_differ : t -> bool

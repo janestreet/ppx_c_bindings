@@ -1,0 +1,19 @@
+(library
+ (foreign_stubs
+  (language cxx)
+  (names example_cpp_stubs))
+ (name ppx_c_bindings_test_cpp)
+ (libraries core)
+ (preprocess
+  (pps ppx_jane ppx_c_bindings)))
+
+(alias
+ (name default)
+ (deps example_cpp.ml.pp example_cpp.mli.pp))
+
+(rule
+ (deps example_cpp.ml)
+ (targets example_cpp_stubs.cpp)
+ (action
+  (bash
+    "%{bin:ppx-c-bindings} -cpp -no-line-numbers %{deps} \\\n       | %{bin:apply-style} - -clang-format -original-file %{targets} \\\n       | grep -ve '^// C[R] ppx-metrics: Please do not commit the generated C stubs.$' \\\n       > %{targets}")))
