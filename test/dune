@@ -17,4 +17,4 @@
  (targets example_stubs.c)
  (action
   (bash
-    "%{bin:ppx-c-bindings} -no-line-numbers %{deps} | %{bin:apply-style} - -clang-format -original-file %{targets} >%{targets}")))
+    "%{bin:ppx-c-bindings} -no-line-numbers %{deps} \\\n       | %{bin:apply-style} - -clang-format -original-file %{targets} \\\n       | grep -ve '^// C[R] ppx-metrics: Please do not commit the generated C stubs.$' \\\n       > %{targets}")))

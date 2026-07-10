@@ -4,10 +4,11 @@ open! Import
 
 type t =
   | Top_level of string
+  | Cpp_top_level of string
   | Type_def of C_type_def.t
   | Expression of C_expression.t
 
-let fold_map (type acc) ~path ~top_level ~type_def ~expression =
+let fold_map (type acc) ~path ~top_level ~cpp_top_level ~type_def ~expression =
   let rec make_walker ~path =
     object
       inherit [acc] Ast.fold_map as super
@@ -32,6 +33,9 @@ let fold_map (type acc) ~path ~top_level ~type_def ~expression =
         | [%stri [%%c [%e? code]]] ->
           let { loc; txt } = long_string_constant code in
           top_level acc ~loc ~path txt
+        | [%stri [%%cpp [%e? code]]] ->
+          let { loc; txt } = long_string_constant code in
+          cpp_top_level acc ~loc ~path txt
         | _ ->
           (match C_type_def.of_structure_item stri with
            | Some i -> type_def acc ~loc ~path i
@@ -61,6 +65,8 @@ let find_all str =
      ~path:[]
      ~top_level:(fun acc ~loc ~path item ->
        [%stri let () = ()], (path, { loc; txt = Top_level item }) :: acc)
+     ~cpp_top_level:(fun acc ~loc ~path item ->
+       [%stri let () = ()], (path, { loc; txt = Cpp_top_level item }) :: acc)
      ~type_def:(fun acc ~loc ~path item ->
        [%stri let () = ()], (path, { loc; txt = Type_def item }) :: acc)
      ~expression:(fun acc ~loc ~path item ->
@@ -72,10 +78,11 @@ let find_all str =
   |> List.rev
 ;;
 
-let map_struct ~top_level ~type_def ~expression str =
+let map_struct ~top_level ~cpp_top_level ~type_def ~expression str =
   (fold_map
      ~path:[]
      ~top_level:(fun () ~loc ~path item -> top_level ~loc ~path item, ())
+     ~cpp_top_level:(fun () ~loc ~path item -> cpp_top_level ~loc ~path item, ())
      ~type_def:(fun () ~loc ~path item -> type_def ~loc ~path item, ())
      ~expression:(fun () ~loc ~path item -> expression ~loc ~path item, ()))
     #structure

@@ -1,6 +1,12 @@
 open! Core
 open! Ppxlib
 
+module Heap_or_stack = struct
+  type t =
+    | Heap
+    | Stack
+end
+
 module Location = struct
   include Location
 
@@ -38,10 +44,11 @@ let parse_string p ?file str =
 ;;
 
 let unique_name ~kind ~sexp_of_t ~loc t =
+  let filename = loc.loc_start.pos_fname |> Filename.basename in
   let filename =
-    String.lsplit2 loc.loc_start.pos_fname ~on:'.'
-    |> Option.value_map ~f:fst ~default:loc.loc_start.pos_fname
-    |> Filename.basename
+    filename
+    |> String.lsplit2 ~on:'.'
+    |> Option.value_map ~f:fst ~default:filename
     |> String.uppercase
   in
   let digest =

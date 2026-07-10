@@ -30,6 +30,9 @@ You can do just about anything you can do in a C file:
 One limitation is that you can't currently use this to write foreign bindings that work
 with both native and `js_of_ocaml` compilation.
 
+C++ bindings are also supported via a dedicated mode; see the [C++ Bindings](#c-bindings)
+section below.
+
 
 Getting Started
 ===============
@@ -109,15 +112,15 @@ let answer = 42 in
 ```
 We have special handling for various primitive types:
 
-| OCaml Type     | C Type      | Syntax                      |
-| -------------- | ----------- | --------------------------- |
-| `bool`         | `bool`      | `%{IDENT:bool}`             |
-| `int`          | `nativeint` | `%{IDENT:int}`              |
-| `Int32.t`      | `int32_t`   | `%{IDENT:Int32.t}`          |
-| `Int64.t`      | `int64_t`   | `%{IDENT:Int64.t}`          |
-| `float`        | `double`    | `%{IDENT:float}`            |
-| `TYPE`         | `value`     | `%{IDENT:TYPE value}`       |
-| `local_ TYPE`  | `value`     | `%{IDENT:TYPE local_value}` |
+| OCaml Type     | Parameter Syntax            | C Type      |
+| -------------- | --------------------------- | ----------- |
+| `int`          | `%{IDENT:int}`              | `nativeint` |
+| `Int32.t`      | `%{IDENT:Int32.t}`          | `int32_t`   |
+| `Int64.t`      | `%{IDENT:Int64.t}`          | `int64_t`   |
+| `float`        | `%{IDENT:float}`            | `double`    |
+| `TYPE`         | `%{IDENT:TYPE value}`       | `value`     |
+| `local_ TYPE`  | `%{IDENT:TYPE local_value}` | `value`     |
+
 
 You can use other types with the syntax `%{IDENT:TYPE value}` (see the [Types](#types)
 section for details on how to use custom types). You can use the `TYPE_val` macro in C to
@@ -126,8 +129,8 @@ convert the value to the appropriate pointer type ( see [OCaml manual section
 you can read a string using the `String_val` macro:
 
 ```ocaml
-(* Prints "Hello Tias!" *)
-let name = "Tias" in
+(* Prints "Hello Streeter!" *)
+let name = "Streeter" in
 [%c.no_alloc {| printf("Hello %s!", String_val(%{name:string value})); |}]
 ```
 
@@ -150,6 +153,7 @@ arguments using `CAMLparam`, `ppx_c_bindings` will automatically do this for you
 By default we assume your expression will not give a result (`void` in C, `unit` in
 ocaml). To return a **primitive** value from the C expression to your OCaml code, you
 can annotate your function call with the appropriate type, e.g.:
+
 ```ocaml
 let result = [%c.no_alloc ({|return sin(%{theta:float});|} : float)]
 ```
@@ -157,6 +161,91 @@ let result = [%c.no_alloc ({|return sin(%{theta:float});|} : float)]
 <div class="alert" style="margin:10px 10px; padding:0px 10px;padding-bottom:10px; font-weight:normal;">
 To return a more complex type you generally need to use `[%c.alloc]`.
 </div>
+
+
+Similar to parameters we have special handling that you can use for many cases.
+
+| OCaml Type      | Return Syntax      | C Type                  |
+| --------------  | ------------------ | -----------             |
+| `unit`          | none               | implemented as Val_unit |
+| `int`           | `int`              | `nativeint`             |
+| `Int32.t`       | `Int32.t`          | `int32_t`               |
+| `Int64.t`       | `Int64.t`          | `int64_t`               |
+| `float`         | `float`            | `double`                |
+| `TYPE`          | `TYPE value`       | `value`                 |
+| `local_ TYPE`   | `TYPE local_value` | `value`                 |
+
+
+### Unboxed Types (OxCaml only)
+
+When you are building with oxcaml we additionally allow the following parameter
+and return types.
+
+| OCaml Type / Return Syntax | Parameter Syntax                | C Type        |
+| -------------------------- | ------------------------------- | ------------- |
+| `Ox.u8`                    | `%{IDENT:Ox.u8}`                | `uint8_t`     |
+| `Ox.i8`                    | `%{IDENT:Ox.i8}`                | `int8_t`      |
+| `Ox.u16`                   | `%{IDENT:Ox.u16}`               | `uint16_t`    |
+| `Ox.i16`                   | `%{IDENT:Ox.i16}`               | `int16_t`     |
+| `Ox.u32`                   | `%{IDENT:Ox.u32}`               | `uint32_t`    |
+| `Ox.i32`                   | `%{IDENT:Ox.i32}`               | `int32_t`     |
+| `Ox.u64`                   | `%{IDENT:Ox.u64}`               | `uint64_t`    |
+| `Ox.i64`                   | `%{IDENT:Ox.i64}`               | `int64_t`     |
+| `Ox.f32`                   | `%{IDENT:Ox.f32}`               | `float`       |
+| `Ox.f64`                   | `%{IDENT:Ox.f64}`               | `double`      |
+| `Ox.isize`                 | `%{IDENT:Ox.isize}`             | `isize_t`     |
+| `Ox.mem`                   | `%{IDENT:Ox.mem}`               | `void*`       |
+| `'a Ox.Ptr.Ext.t`          | `%{IDENT:'a Ox.Ptr.Ext.t}`      | `void*`       |
+| `'a Ox.Ptr.Ext.Imm.t`      | `%{IDENT:'a Ox.Ptr.Ext.Imm.t}`  | `const void*` |
+| `'a Ox.Addr.Ext.t`         | `%{IDENT:'a Ox.Addr.Ext.t}`     | `void*`       |
+| `'a Ox.Addr.Ext.Imm.t`     | `%{IDENT:'a Ox.Addr.Ext.Imm.t}` | `const void*` |
+
+FYI: We redefine `CAMLreturn` where appropriate to have the correct type, so you
+do not need to use `CAMLreturnT` explicitly.
+
+#### Restrictions
+
+- This is only supported when using the OxCaml compiler as this currently relies
+  on features that have not yet landed in the upstream OCaml compiler.
+
+
+### Returning unboxed tuples (OxCaml only)
+
+You can return a 2-element unboxed tuple from `[c...]` expressions.
+The native C function returns a small struct via the SysV small-struct
+ABI (in `rax`/`rdx` on x86-64).
+
+Within the C body you populate the result using the compound literal syntax.
+
+```ocaml
+let #(a, b) = [%c.no_alloc ({| return { 42, Val_int(24) }; |} : #(Ox.i64 * int value))]
+```
+
+or
+
+```ocaml
+let #(a, b) = [%c.no_alloc ({| CAMLreturn( { 42, Val_int(24) } ); |} : #(Ox.i64 * int value))]
+```
+
+The struct field types follow each component's natural OxCaml layout:
+
+| Component         | C field type      |
+| ----------------- | ----------------- |
+| `Ox.*`            | See Unboxed Types |
+| `T value`         | `value`           |
+| `T local_value`   | `value`           |
+
+
+##### Restrictions:
+
+- Returning unboxed products from externals is OxCaml-only.
+- Native compilation only 
+- Only allowed in the return position (no unboxed tuple arguments).
+- Only up to two element tuples (this is from the OxCaml/C ABI and enforced/checked by the compiler)
+- No nested unboxed tuples (unsupported by the compiler)
+- The types `int`, `float`, `Int32.t` and `Int64.t` are not currently supported in tuples
+  (Bad interaction with `[@untagged]`/`[@unboxed]` attributes), use an appropriate `Ox.`
+  type instead.
 
 ### When should I use `[%c.no_alloc]` vs `[%c.alloc]`
 Generally the recommendation is to write your bindings with simple C snippets that
@@ -171,6 +260,9 @@ In general if you do anything that requires interaction with the OCaml GC:
 - [calling back into OCaml code](https://ocaml.org/manual/5.2/intfc.html#s:c-callback)
 
 then you need to use `[%c.alloc]`.
+
+Tip: you can use go-lang style tuple returns (see [unboxed tuples](#Returning-unboxed-tuples) above) to
+return errors without requiring allocations.
 
 #### Allocating
 Sometimes its helpful to return more than just primitive values from C.
@@ -223,7 +315,6 @@ You probably want to review the OCaml manual chapter [multithreading in c bindin
 - You may not call any other OCaml runtime functions (other then what is described in the
   manual), so no allocating or raising exceptions.
 
-
 Types
 -----
 You can't always just use primitive types, sometimes the library you're wrapping defines
@@ -250,9 +341,16 @@ This will define:
 
 - a C macro `Foo_val(...)` that you can use to access the content of `foo` within C code.
 
+- a C macro `Foo_alloc()` that you can use to construct a value of this type from C.
+
 - a function `val alloc_foo : unit -> foo` that you can use to create a new value of type
   `foo` in OCaml. The value will be uninitialized (not necessarily zero-initialized), but
   you can use [%c.no_alloc] (or [%c.alloc]) and `Foo_val` to populate it.
+
+- If the type does not define a ~free (GC finalizers are not supported in stack local
+  allocations), then additionally you get
+    - a C macro `Foo_alloc__stack()` to construct a stack local value of the type
+    - and `val alloc_foo__stack : unit -> foo @ local` (best called as `(alloc_foo[@alloc stack])`) to do the same in OCaml.
 
 The content of the type will be on the OCaml heap, so you may only access it if you have
 the runtime lock, and the value may be moved around during garbage collection.
@@ -289,29 +387,120 @@ The first pass runs as a normal OCaml PPX. It discards top level `[%%c ...]` sta
 ```ocaml
 (let open struct
   external unique_name : float[@unboxed] -> float[@unboxed]=
-                           "FILE_long_unique_name_bytecode" "FILE_long_unique_name_native"
+                           "PPX_C_BINDINGS_DOES_NOT_SUPPORT_BYTE_CODE" "FILE_long_unique_name"
 end in unique_name theta),
 (let open struct
   external unique_name2 : unit -> string =
-                            "FILE_long_unique_name2_bytecode" "FILE_long_unique_name2_native"
+                            "PPX_C_BINDINGS_DOES_NOT_SUPPORT_BYTE_CODE" "FILE_long_unique_name2"
 end in unique_name2 ()),
 ```
 The second pass (the `rule` in the jbuild above), will generate a C file, by copying top level expressions, and generating suitable functions to enclose the code.
 ```c
-CAMLprim double FILE_long_unique_name_native(double theta) {
+CAMLprim double FILE_long_unique_name(double theta) {
   return sin((theta));
 }
-CAMLprim value FILE_long_unique_name_bytecode(value theta) {
-  return caml_alloc_double(FILE_long_unique_name_native(Double_val(theta)))
-}
-CAMLprim value FILE_long_unique_name2_native() {
+CAMLprim value FILE_long_unique_name2() {
   CAMLparam0();
   CAMLreturn(caml_copy_string("Hi!"));
 }
-CAMLprim value FILE_long_unique_name2_bytecode() {
-  return FILE_long_unique_name_native2();
-}
 ```
+
+- `ppx_c_bindings` ppx expansion and generated C code are only supported when used with
+  a native target of ocamlc and are not compatible with the bytecode compiler.
+  You should get build time linker errors if this applies to you.
+  (Earlier versions of `ppx_c_bindings` included some simple bytecode bindings but these
+  were unused so far as we know and entirely untested).
+
+
+C++ Bindings
+============
+
+You can use `ppx_c_bindings` to bind to C++ libraries. Pass `-cpp to the code generator
+and target a `.cpp` output file. In C++ mode, each generated/inserted C snippet (type
+definitions, expression wrappers, and the contents of `[%%c ...]` blocks) is
+individually wrapped in its own `extern "C" { ... }` block, so OCaml sees ordinary
+C-linkage symbols. `[%%cpp ...]` blocks are emitted verbatim (not wrapped).
+
+### `jbuild` setup
+
+Use `cxx_names` / `cxx_flags` and generate a `.cpp` file:
+
+```jbuild
+  (cxx_names (${NAME}_stubs))
+  (cxx_flags (:standard -std=gnu++17))
+  (preprocess (pps (ppx_jane ppx_c_bindings)))
+```
+
+C++ mode is selected by the stub-generation rule: pass `-cpp` to `ppx-c-bindings` and
+emit a `.cpp` output. The PPX itself always accepts `[%%cpp ...]` (it is a no-op at the
+OCaml level), so there is no separate PPX flag to keep in sync.
+
+```jbuild
+(rule (
+  (deps    (${NAME}.ml))
+  (targets (${NAME}_stubs.cpp))
+  (action "%{bin:ppx-c-bindings} -cpp %{deps}>%{target}")))
+```
+
+If `[%%cpp ...]` is used without `-cpp` on `ppx-c-bindings`, the stub generator emits a
+`#error` directive at the original source location, so the mismatch is reported by the
+C++ compiler instead of silently producing broken stubs.
+
+### Writing C++ only snippets with `[%%cpp ...]`
+
+`[%%c ...]` blocks land inside the generated `extern "C" { ... }` wrapper. That is fine
+for C headers (e.g. `<math.h>`, `<string.h>`), which typically have their own `extern "C"`
+guards internally, but it does **not** work for C++ headers such as `<string>` or
+`<vector>`, which must be included at C++ linkage.
+
+Use `[%%cpp ...]` for anything that needs C++ linkage: C++ standard library includes,
+`namespace` declarations, helper classes / templates, etc.
+
+```ocaml
+[%%cpp
+  {|
+#include <string>
+#include <vector>
+
+namespace my_helpers {
+  static std::string greet(const std::string& who) {
+    return std::string("hello, ") + who;
+  }
+}
+|}]
+```
+
+You can freely mix `[%%c ...]` and `[%%cpp ...]` blocks. Inside `[%c.no_alloc]` /
+`[%c.alloc]` expression bodies you can still use C++ features such as STL types and
+lambdas, because the body itself is compiled as C++; only the function's *linkage* is
+`"C"` (the body can use any C++ construct, subject to the caveats below).
+
+### Restrictions on `extern "C"` function bodies
+
+`extern "C"` only changes *linkage* (no name mangling, no overloading); it does not
+restrict what C++ features can appear *inside* the function body. In practice,
+effectively anything that is legal in a normal C++ function body is legal in the bodies
+`ppx_c_bindings` generates for you:
+
+  - local variables of C++ class types (including STL types such as `std::string`,
+    `std::vector`, etc.)
+  - RAII, destructors, lambdas, `auto`, range-`for`, templated helpers, etc.
+  - `throw` and `try` / `catch`, as long as exceptions are caught *before* returning
+
+The useful restrictions to keep in mind are:
+
+  - **Exceptions must not propagate back to the OCaml runtime.** The generated entry
+    points have C linkage and are called directly from OCaml; if a C++ exception leaks
+    out of a binding, behavior is implementation-defined (typically `std::terminate`).
+    Wrap fallible C++ code in `try { ... } catch (...) { ... }` and convert failures into
+    an OCaml-visible error (e.g. raise an OCaml exception via `caml_failwith` /
+    `caml_raise_*`).
+  - **Function overloading / default arguments / member functions don't apply**: the
+    generated functions are top-level C-linkage functions with unique names, so these
+    purely-declaration-level C++ features aren't relevant.
+
+If support for features like "automatically convert C++ exceptions to OCaml exceptions"
+would be useful, it is a natural next extension to this mode.
 
 Resources
 =========

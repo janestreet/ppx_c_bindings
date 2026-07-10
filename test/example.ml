@@ -37,9 +37,15 @@ let cos a = [%c.no_alloc ({|return cos(%{a:float});|} : float)]
 let%expect_test _ =
   printf "%g" pi;
   [%expect {| 3.14159 |}];
+  printf "%g" Float.pi;
+  [%expect {| 3.14159 |}];
   printf "%g" (sin pi);
-  [%expect {| 0 |}];
+  [%expect {| 1.22465e-16 |}];
+  printf "%g" (Float.sin pi);
+  [%expect {| 1.22465e-16 |}];
   printf "%g" (cos pi);
+  [%expect {| -1 |}];
+  printf "%g" (Float.cos pi);
   [%expect {| -1 |}]
 ;;
 
@@ -64,31 +70,7 @@ let%expect_test "many args" =
   [%expect {| 21 |}]
 ;;
 
-let%expect_test "Large ints (32)" =
-  printf !"%{Int.Hex}\n" [%c.alloc ({| CAMLreturn(0x3fabcdef); |} : int)];
-  printf !"%{Int.Hex}\n" [%c.no_alloc ({| return 0x3fabcdef; |} : int)];
-  [%expect
-    {|
-    0x3fabcdef
-    0x3fabcdef
-    |}];
-  printf !"%{Int.Hex}\n" [%c.alloc ({| CAMLreturn(0x7fabcdef); |} : int)];
-  printf !"%{Int.Hex}\n" [%c.no_alloc ({| return 0x7fabcdef; |} : int)];
-  [%expect
-    {|
-    0x7fabcdef
-    0x7fabcdef
-    |}];
-  printf !"%{Int.Hex}\n" [%c.alloc ({| CAMLreturn(0xffabcdef); |} : int)];
-  printf !"%{Int.Hex}\n" [%c.no_alloc ({| return 0xffabcdef; |} : int)];
-  [%expect
-    {|
-    0xffabcdef
-    0xffabcdef
-    |}]
-;;
-
-let%expect_test "Large ints (64)" =
+let%expect_test "Large ints (native)" =
   printf !"%{Int.Hex}\n" [%c.alloc ({| CAMLreturn(0x3fabcdef); |} : int)];
   printf !"%{Int.Hex}\n" [%c.no_alloc ({| return 0x3fabcdef; |} : int)];
   [%expect
@@ -140,19 +122,31 @@ let%expect_test "Large ints (64)" =
     |}]
 ;;
 
-let%expect_test ("Large int (32bit)" [@tags "32-bits-only"]) =
+let%expect_test "Large int (32bit)" =
   printf !"%{Int32.Hex}\n" [%c.alloc ({| CAMLreturn(0x3fabcdef); |} : Int32.t)];
   printf !"%{Int32.Hex}\n" [%c.no_alloc ({| return 0x3fabcdef; |} : Int32.t)];
-  [%expect {| 0x3fabcdef |}];
+  [%expect
+    {|
+    0x3fabcdef
+    0x3fabcdef
+    |}];
   printf !"%{Int32.Hex}\n" [%c.alloc ({| CAMLreturn(0x7fabcdef); |} : Int32.t)];
   printf !"%{Int32.Hex}\n" [%c.no_alloc ({| return 0x7fabcdef; |} : Int32.t)];
-  [%expect {| 0x7fabcdef |}];
+  [%expect
+    {|
+    0x7fabcdef
+    0x7fabcdef
+    |}];
   printf !"%{Int32.Hex}\n" [%c.alloc ({| CAMLreturn(0xffabcdef); |} : Int32.t)];
   printf !"%{Int32.Hex}\n" [%c.no_alloc ({| return 0xffabcdef; |} : Int32.t)];
-  [%expect {| -0x543211 |}]
+  [%expect
+    {|
+    -0x543211
+    -0x543211
+    |}]
 ;;
 
-let%expect_test ("Large ints (64bit)" [@tags "64-bits-only"]) =
+let%expect_test "Large ints (64bit)" =
   printf !"%{Int64.Hex}\n" [%c.alloc ({| CAMLreturn(0x3fabcdef); |} : Int64.t)];
   printf !"%{Int64.Hex}\n" [%c.no_alloc ({| return 0x3fabcdef; |} : Int64.t)];
   [%expect
@@ -217,6 +211,16 @@ let%expect_test ("Large ints (64bit)" [@tags "64-bits-only"]) =
        TEST_HELPER1(Module_b__T_val) \
        TEST_HELPER1(Submodule__T_val) \
        TEST_HELPER1(Module_b__Submodule__T_val) \
+       TEST_HELPER1(T_alloc) \
+       TEST_HELPER1(Module_a__T_alloc) \
+       TEST_HELPER1(Module_b__T_alloc) \
+       TEST_HELPER1(Submodule__T_alloc) \
+       TEST_HELPER1(Module_b__Submodule__T_alloc) \
+       TEST_HELPER1(T_alloc__stack) \
+       TEST_HELPER1(Module_a__T_alloc__stack) \
+       TEST_HELPER1(Module_b__T_alloc__stack) \
+       TEST_HELPER1(Submodule__T_alloc__stack) \
+       TEST_HELPER1(Module_b__Submodule__T_alloc__stack) \
     ));
 |}]
 
@@ -241,6 +245,16 @@ let%expect_test _ =
     Module_b__T_val: undefined
     Submodule__T_val: undefined
     Module_b__Submodule__T_val: undefined
+    T_alloc: undefined
+    Module_a__T_alloc: undefined
+    Module_b__T_alloc: undefined
+    Submodule__T_alloc: undefined
+    Module_b__Submodule__T_alloc: undefined
+    T_alloc__stack: undefined
+    Module_a__T_alloc__stack: undefined
+    Module_b__T_alloc__stack: undefined
+    Submodule__T_alloc__stack: undefined
+    Module_b__Submodule__T_alloc__stack: undefined
     |}]
 ;;
 
@@ -257,6 +271,50 @@ module Module_a = struct
       Module_b__T_val: undefined
       Submodule__T_val: undefined
       Module_b__Submodule__T_val: undefined
+      T_alloc: defined
+      Module_a__T_alloc: undefined
+      Module_b__T_alloc: undefined
+      Submodule__T_alloc: undefined
+      Module_b__Submodule__T_alloc: undefined
+      T_alloc__stack: defined
+      Module_a__T_alloc__stack: undefined
+      Module_b__T_alloc__stack: undefined
+      Submodule__T_alloc__stack: undefined
+      Module_b__Submodule__T_alloc__stack: undefined
+      |}]
+  ;;
+
+  (* Exercises the [caml_alloc_custom_local] / [alloc_t__stack] codepath at runtime, so a
+     regression in the OCaml-side stub or in the [@noalloc] / [@ local] annotations gets
+     caught here and not just by the [example_stubs.c] codegen snapshot.
+  *)
+  let%expect_test "alloc_t stack/heap" =
+    let consume (t @ local) =
+      print_s [%message "is_stack_allocated" ~_:(Obj.is_stack (Obj.repr t) : bool)]
+    in
+    (* check manually constructed name works as epxected *)
+    consume (alloc_t__stack ());
+    [%expect {| (is_stack_allocated true) |}];
+    (* check this works as expected with ppx_emplate *)
+    let module _ = struct
+      let%template alloc_mode = "stack" [@@alloc stack]
+      let%template alloc_mode = "heap" [@@alloc heap]
+
+      [%%template
+      [@@@alloc a = (heap, stack)]
+
+      let () =
+        print_endline (alloc_mode [@alloc a]);
+        consume ((alloc_t [@alloc a]) ())
+      ;;]
+    end
+    in
+    [%expect
+      {|
+      heap
+      (is_stack_allocated false)
+      stack
+      (is_stack_allocated true)
       |}]
   ;;
 end
@@ -271,6 +329,16 @@ let%expect_test _ =
     Module_b__T_val: undefined
     Submodule__T_val: undefined
     Module_b__Submodule__T_val: undefined
+    T_alloc: undefined
+    Module_a__T_alloc: defined
+    Module_b__T_alloc: undefined
+    Submodule__T_alloc: undefined
+    Module_b__Submodule__T_alloc: undefined
+    T_alloc__stack: undefined
+    Module_a__T_alloc__stack: defined
+    Module_b__T_alloc__stack: undefined
+    Submodule__T_alloc__stack: undefined
+    Module_b__Submodule__T_alloc__stack: undefined
     |}]
 ;;
 
@@ -285,10 +353,20 @@ module Module_b = struct
       Module_b__T_val: undefined
       Submodule__T_val: undefined
       Module_b__Submodule__T_val: undefined
+      T_alloc: undefined
+      Module_a__T_alloc: defined
+      Module_b__T_alloc: undefined
+      Submodule__T_alloc: undefined
+      Module_b__Submodule__T_alloc: undefined
+      T_alloc__stack: undefined
+      Module_a__T_alloc__stack: defined
+      Module_b__T_alloc__stack: undefined
+      Submodule__T_alloc__stack: undefined
+      Module_b__Submodule__T_alloc__stack: undefined
       |}]
   ;;
 
-  type t = [%c {|char|}]
+  type t = [%c {|char|} ~free:{|(void)t;|}]
 
   let%expect_test _ =
     (* this needs to be duplicated, otherwise it doesn't work *)
@@ -300,6 +378,16 @@ module Module_b = struct
       Module_b__T_val: undefined
       Submodule__T_val: undefined
       Module_b__Submodule__T_val: undefined
+      T_alloc: defined
+      Module_a__T_alloc: defined
+      Module_b__T_alloc: undefined
+      Submodule__T_alloc: undefined
+      Module_b__Submodule__T_alloc: undefined
+      T_alloc__stack: undefined
+      Module_a__T_alloc__stack: defined
+      Module_b__T_alloc__stack: undefined
+      Submodule__T_alloc__stack: undefined
+      Module_b__Submodule__T_alloc__stack: undefined
       |}]
   ;;
 
@@ -313,6 +401,16 @@ module Module_b = struct
       Module_b__T_val: undefined
       Submodule__T_val: undefined
       Module_b__Submodule__T_val: undefined
+      T_alloc: defined
+      Module_a__T_alloc: defined
+      Module_b__T_alloc: undefined
+      Submodule__T_alloc: undefined
+      Module_b__Submodule__T_alloc: undefined
+      T_alloc__stack: undefined
+      Module_a__T_alloc__stack: defined
+      Module_b__T_alloc__stack: undefined
+      Submodule__T_alloc__stack: undefined
+      Module_b__Submodule__T_alloc__stack: undefined
       |}]
   ;;
 
@@ -329,6 +427,16 @@ module Module_b = struct
         Module_b__T_val: undefined
         Submodule__T_val: undefined
         Module_b__Submodule__T_val: undefined
+        T_alloc: defined
+        Module_a__T_alloc: defined
+        Module_b__T_alloc: undefined
+        Submodule__T_alloc: undefined
+        Module_b__Submodule__T_alloc: undefined
+        T_alloc__stack: defined
+        Module_a__T_alloc__stack: defined
+        Module_b__T_alloc__stack: undefined
+        Submodule__T_alloc__stack: undefined
+        Module_b__Submodule__T_alloc__stack: undefined
         |}]
     ;;
   end
@@ -343,6 +451,16 @@ module Module_b = struct
       Module_b__T_val: undefined
       Submodule__T_val: defined
       Module_b__Submodule__T_val: undefined
+      T_alloc: defined
+      Module_a__T_alloc: defined
+      Module_b__T_alloc: undefined
+      Submodule__T_alloc: defined
+      Module_b__Submodule__T_alloc: undefined
+      T_alloc__stack: undefined
+      Module_a__T_alloc__stack: defined
+      Module_b__T_alloc__stack: undefined
+      Submodule__T_alloc__stack: defined
+      Module_b__Submodule__T_alloc__stack: undefined
       |}]
   ;;
 end
@@ -357,6 +475,16 @@ let%expect_test _ =
     Module_b__T_val: defined
     Submodule__T_val: undefined
     Module_b__Submodule__T_val: defined
+    T_alloc: undefined
+    Module_a__T_alloc: defined
+    Module_b__T_alloc: defined
+    Submodule__T_alloc: undefined
+    Module_b__Submodule__T_alloc: defined
+    T_alloc__stack: undefined
+    Module_a__T_alloc__stack: defined
+    Module_b__T_alloc__stack: undefined
+    Submodule__T_alloc__stack: undefined
+    Module_b__Submodule__T_alloc__stack: defined
     |}]
 ;;
 

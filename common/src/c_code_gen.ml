@@ -3,15 +3,26 @@ open! Ppxlib
 open! Import
 
 module Config = struct
-  type t = { line_numbers : bool }
+  type t =
+    { line_numbers : bool
+    ; cpp : bool
+    }
 
   let param =
     let%map_open.Command () = return ()
     and line_numbers =
       flag "no-line-numbers" no_arg ~doc:" Do not include line numbers in the output"
       >>| not
+    and cpp =
+      flag
+        "cpp"
+        no_arg
+        ~doc:
+          " Generate C++ output: wrap each generated binding in an [extern \"C\"] block \
+           and emit [%%cpp ...] contents verbatim outside of it (without [-cpp], a \
+           [%%cpp ...] block produces a compile-time [#error])"
     in
-    { line_numbers }
+    { line_numbers; cpp }
   ;;
 end
 
@@ -109,6 +120,33 @@ let print' ~(config : Config.t) here code =
 let print ~config { loc = { loc_start = here; _ }; txt = code } = print' ~config here code
 let top_level ~config ~loc code = print' ~config loc.loc_start code
 
+(* [%%cpp ...] blocks must not be wrapped in [extern "C" { ... }] so that things like
+   [#include <iostream>] work correctly. They are emitted verbatim.
+
+   In plain C mode this case is diagnosed by the PPX. If the generator is reached anyway
+   (e.g. a user with out-of-sync flags) we emit a [#error] directive instead of the
+   snippet; together with the preceding [#line] directive the C compiler reports the error
+   at the original [.ml] location with no special formatting needed on our side. *)
+let cpp_top_level ~(config : Config.t) ~loc code =
+  if config.cpp
+  then print' ~config loc.loc_start code
+  else
+    print'
+      ~config
+      loc.loc_start
+      {|#error "[%%cpp ...] is only supported in C++ mode; pass [-cpp] to [ppx-c-bindings]"|}
+;;
+
+(* In C++ mode, wrap an emission in its own [extern "C" { ... }] block so the generated
+   symbol has C linkage while still being compiled as C++. Snippets that are emitted as
+   C++ (e.g. [[%%cpp ...]]) must NOT be passed through this helper. *)
+let with_extern_c ~(config : Config.t) f =
+  if config.cpp then print_endline "extern \"C\" {";
+  let result = f () in
+  if config.cpp then print_endline "}";
+  result
+;;
+
 let type_def ~config ~defs ~loc t =
   let unique_name = C_type_def.unique_name ~loc t in
   let defs, internal_unpack_f =
@@ -170,18 +208,47 @@ static struct custom_operations %{op_name} = {
 |}];
     op_name
   in
-  print'
-    ~config
-    [%here]
-    [%string
-      {|
-CAMLprim value alloc_%{unique_name}() {
+  let print_internal_alloc defs ~heap_or_stack =
+    let alloc_fn_name, suffix =
+      match (heap_or_stack : Heap_or_stack.t) with
+      | Heap -> "caml_alloc_custom", ""
+      | Stack -> "caml_alloc_custom_local", "__stack"
+    in
+    let defs, internal_alloc_f =
+      Defs.define
+        defs
+        ~unique_name
+        [%string "%{(C_type_def.name t).txt |> String.capitalize}_alloc%{suffix}"]
+        ~print_master_define:(fun ~name ->
+          print'
+            ~config
+            (C_type_def.name t).loc.loc_start
+            [%string
+              {|
+static inline value %{name}() {
+  return %{alloc_fn_name}(&%{custom_operations},sizeof(%{(C_type_def.c_type t).txt}),0,1);
+}|}])
+    in
+    print'
+      ~config
+      [%here]
+      [%string
+        {|
+CAMLprim value alloc_%{unique_name}%{suffix}() {
       CAMLparam0();
       CAMLlocal1(__t_val);
-      __t_val=caml_alloc_custom(&%{custom_operations},sizeof(%{(C_type_def.c_type t).txt}),0,1);
+      __t_val=%{internal_alloc_f}();
       CAMLreturn(__t_val);
 }
-|}];
+        |}];
+    defs
+  in
+  let defs = print_internal_alloc defs ~heap_or_stack:Heap in
+  let defs =
+    if Option.is_some (C_type_def.free t)
+    then defs
+    else print_internal_alloc defs ~heap_or_stack:Stack
+  in
   defs
 ;;
 
@@ -207,23 +274,127 @@ let caml_params ~config gc_root_args =
       print' ~config [%here] [%string "CAML%{ext}param%{nargs#Int}(%{args});"])
 ;;
 
-let native_function ~config ~loc ~native_function_name (code : C_expression.t) =
-  let return_type =
-    match C_expression.return code with
-    | None -> "value"
-    | Some type_ -> Type_.to_c_type type_
-  in
+let native_function ~config ~loc (code : C_expression.t) =
+  let unique_name = C_expression.unique_name ~loc code in
   let fn_args =
     C_expression.args code
     |> Map.to_alist
     |> List.map ~f:(fun (name, type_) ->
-      [%string "%{Type_.to_c_type type_} %{var_name name}"])
+      match Type_.to_c_type type_ with
+      | `Primitive type_ -> [%string "%{type_} %{var_name name}"]
+      | `Struct _ ->
+        Location.raise_errorf
+          ~loc
+          "ppx_c_bindings: we don't currently support unboxed tuples in argument \
+           positions"
+          ())
     |> String.concat ~sep:", "
+  in
+  let return_type, additional_boiler_plate =
+    match C_expression.return code with
+    | None -> "value", Fn.const ()
+    | Some type_ ->
+      (match Type_.to_c_type type_ with
+       | `Primitive "value" -> "value", Fn.const ()
+       | `Primitive return_type ->
+         (match C_expression.alloc code with
+          | false -> return_type, Fn.const ()
+          | true ->
+            let additional_boiler_plate = function
+              | `Before_user_code ->
+                (* redefine CAMLreturn to have the correct type instead of value. *)
+                print'
+                  ~config
+                  [%here]
+                  [%string
+                    {|
+                  #undef CAMLreturn
+                  #define CAMLreturn(R) CAMLreturnT(%{return_type}, R)
+                |}]
+              | `Cleanup_at_end ->
+                (* revert the change *)
+                print'
+                  ~config
+                  [%here]
+                  [%string
+                    {|
+                    #undef CAMLreturn
+                    #define CAMLreturn(R) CAMLreturnT(value, R)
+                  |}]
+            in
+            return_type, additional_boiler_plate)
+       | `Struct struct_ ->
+         let struct_name = [%string "return_tuple__%{unique_name}"] in
+         print' ~config [%here] [%string {| struct %{struct_name} %{struct_}; |}];
+         let return_type = [%string {| struct %{struct_name} |}] in
+         (match C_expression.alloc code with
+          | false ->
+            let additional_boiler_plate = function
+              | `Before_user_code ->
+                print'
+                  ~config
+                  [%here]
+                  [%string
+                    {|
+                  #ifndef __cplusplus 
+                    // C99 requires a cast to use the array/struct initializer syntax
+                    #define return return (%{return_type})
+                  #else
+                    // C++ doesn't allow the cast, but you can prefix with the struct name
+                    #define return return %{struct_name} 
+                  #endif
+                |}]
+              | `Cleanup_at_end ->
+                print'
+                  ~config
+                  [%here]
+                  [%string
+                    {|
+                    #undef return
+                  |}]
+            in
+            return_type, additional_boiler_plate
+          | true ->
+            let additional_boiler_plate = function
+              | `Before_user_code ->
+                (* redefine CAMLreturn to have the correct type instead of value.
+
+                   We need some additional hacks here to handle the commas inside the
+                   macro arguments.
+                *)
+                print'
+                  ~config
+                  [%here]
+                  [%string
+                    {|
+                  #undef CAMLreturn
+                  #define PPX_C_BINDINGS_VA_ARGS_TUPLE_WRAPPER(...) __VA_ARGS__
+                  #ifndef __cplusplus 
+                    // C99 requires a cast to use the array/struct initializer syntax
+                    #define CAMLreturn(...) CAMLreturnT(%{return_type}, (%{return_type}) PPX_C_BINDINGS_VA_ARGS_TUPLE_WRAPPER ( __VA_ARGS__ ) )
+                  #else
+                   // C++ doesn't allow the cast, but you can prefix with the struct name
+                   #define CAMLreturn(...) CAMLreturnT(%{return_type}, %{struct_name} PPX_C_BINDINGS_VA_ARGS_TUPLE_WRAPPER ( __VA_ARGS__ ) )
+                  #endif
+                |}]
+              | `Cleanup_at_end ->
+                (* revert the change *)
+                print'
+                  ~config
+                  [%here]
+                  [%string
+                    {|
+                    #undef PPX_C_BINDINGS_VA_ARGS_TUPLE_WRAPPER
+                    #undef CAMLreturn
+                    #define CAMLreturn(R) CAMLreturnT(value, R)
+                  |}]
+            in
+            return_type, additional_boiler_plate))
   in
   print'
     ~config
     loc.loc_start
-    [%string "CAMLprim %{return_type} %{native_function_name}(%{fn_args}) {"];
+    [%string "CAMLprim %{return_type} %{unique_name}(%{fn_args}) {"];
   if not (C_expression.alloc code)
   then ()
   else (
@@ -231,97 +402,19 @@ let native_function ~config ~loc ~native_function_name (code : C_expression.t) =
       C_expression.args code
       |> Map.to_alist
       |> List.filter_map ~f:(fun (name, type_) ->
-        match type_ with
-        | Value _ | Local_value _ -> Some (var_name name)
-        | Int | Int32 | Int64 | Float -> None)
+        if Type_.is_gc_root ~loc type_ then Some (var_name name) else None)
     in
     caml_params ~config gc_root_args);
+  additional_boiler_plate `Before_user_code;
   print_code ~config code;
   if Option.is_none (C_expression.return code)
   then
     if C_expression.alloc code
     then print' ~config [%here] "CAMLreturn(Val_unit);"
     else print' ~config [%here] "return Val_unit;";
-  print' ~config [%here] "}"
-;;
-
-let bytecode_wrapper_function
-  ~config
-  ~loc
-  ~native_function_name
-  ~bytecode_function_name
-  (code : C_expression.t)
-  =
-  let unpack expr ~type_ =
-    match (type_ : Type_.t) with
-    | Value _ | Local_value _ -> expr
-    | Int -> [%string "Int_val(%{expr})"]
-    | Int32 -> [%string "Int32_val(%{expr})"]
-    | Int64 -> [%string "Int64_val(%{expr})"]
-    | Float -> [%string "Double_val(%{expr})"]
-  in
-  let pack expr ~type_ =
-    match (type_ : Type_.t) with
-    | Value _ | Local_value _ -> expr
-    | Int -> [%string "Val_int(%{expr})"]
-    | Int32 -> [%string "caml_copy_int32(%{expr})"]
-    | Int64 -> [%string "caml_copy_int64(%{expr})"]
-    | Float -> [%string "caml_copy_double(%{expr})"]
-  in
-  let args = C_expression.args code |> Map.to_alist in
-  let fn_args, ignore_extra_args, call_args =
-    if List.length args > 5
-    then
-      ( "value* argv, int argn"
-      , "((void)((argn)));"
-      , args
-        |> List.mapi ~f:(fun i (name, type_) ->
-          unpack ~type_ [%string "argv[%{i#Int}] /* %{name} */"])
-        |> String.concat ~sep:", " )
-    else
-      ( args
-        |> List.map ~f:(fun (name, _) -> [%string "value %{name}"])
-        |> String.concat ~sep:", "
-      , ""
-      , args
-        |> List.map ~f:(fun (name, type_) -> unpack name ~type_)
-        |> String.concat ~sep:", " )
-  in
-  print'
-    ~config
-    loc.loc_start
-    [%string "CAMLprim value %{bytecode_function_name}(%{fn_args}) {"];
-  (match C_expression.return code with
-   | None ->
-     print'
-       ~config
-       [%here]
-       [%string
-         "%{ignore_extra_args}\n%{native_function_name}(%{call_args});\nreturn Val_unit;"]
-   | Some type_ ->
-     let expr = [%string "%{native_function_name}(%{call_args})"] in
-     if Type_.pack_allocates type_ then caml_params ~config (List.map args ~f:fst);
-     print' ~config [%here] [%string.global "%{ignore_extra_args}"];
-     if Type_.pack_allocates type_
-     then print' ~config [%here] [%string "CAMLreturn(%{pack ~type_ expr});"]
-     else print' ~config [%here] [%string "return %{pack ~type_ expr};"]);
-  print' ~config [%here] "}"
-;;
-
-let expression ~config ~loc code =
-  let unique_name = C_expression.unique_name ~loc code in
-  if C_expression.native_and_bytecode_differ code
-  then (
-    let native_function_name = unique_name ^ "_native" in
-    let bytecode_function_name = unique_name ^ "_bytecode" in
-    native_function ~config ~loc ~native_function_name code;
-    bytecode_wrapper_function
-      ~config
-      ~loc
-      ~native_function_name
-      ~bytecode_function_name
-      code)
-  else native_function ~config ~loc ~native_function_name:unique_name code
+  print' ~config [%here] "}";
+  additional_boiler_plate `Cleanup_at_end;
+  ()
 ;;
 
 let command () =
@@ -330,6 +423,7 @@ let command () =
     (let%map_open.Command file = anon ("FILE" %: Filename_unix.arg_type)
      and config = Config.param in
      fun () ->
+       ();
        print'
          ~config
          [%here]
@@ -349,11 +443,15 @@ let command () =
          let defs = Defs.update_path defs ~path in
          match code with
          | Top_level code ->
-           top_level ~config ~loc code;
+           with_extern_c ~config (fun () -> top_level ~config ~loc code);
            defs
-         | Type_def code -> type_def ~config ~defs ~loc code
+         | Cpp_top_level code ->
+           cpp_top_level ~config ~loc code;
+           defs
+         | Type_def code ->
+           with_extern_c ~config (fun () -> type_def ~config ~defs ~loc code)
          | Expression code ->
-           expression ~config ~loc code;
+           with_extern_c ~config (fun () -> native_function ~config ~loc code);
            defs)
        |> Defs.update_path ~path:[]
        |> (ignore : Defs.t -> unit))
